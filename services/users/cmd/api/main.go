@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
+	"leprechaun/users/internal/application"
 	"log/slog"
 	"net/http"
 	"os"
@@ -13,6 +15,7 @@ import (
 
 	"leprechaun/users/internal/infrastructure/config"
 	"leprechaun/users/internal/infrastructure/mongodb"
+	"leprechaun/users/internal/infrastructure/yandex"
 	transport "leprechaun/users/internal/transport/http"
 )
 
@@ -31,8 +34,8 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	startupCtx, startupCancel := context.WithTimeout(ctx, 15*time.Second)
-	client, _, err := mongodb.Open(startupCtx, cfg.MongoURI, cfg.MongoDatabase)
-	startupCancel()
+	defer startupCancel()
+	client, repository, err := mongodb.Open(startupCtx, cfg.MongoURI, cfg.MongoDatabase)
 	if err != nil {
 		return fmt.Errorf("initialize storage: %w", err)
 	}
@@ -43,8 +46,33 @@ func run() error {
 			slog.Error("MongoDB disconnect failed")
 		}
 	}()
+	var routes []func(*http.ServeMux)
+	if cfg.YandexClientID != "" || cfg.YandexClientSecret != "" {
+		if cfg.YandexClientID == "" || cfg.YandexClientSecret == "" || cfg.YandexRedirectURL == "" {
+			return errors.New("set YANDEX_CLIENT_ID, YANDEX_CLIENT_SECRET and YANDEX_REDIRECT_URL together")
+		}
+		sessions, err := mongodb.OpenSessions(startupCtx, client.Database(cfg.MongoDatabase))
+		if err != nil {
+			return errors.New("initialize authentication storage failed")
+		}
+		provider := yandex.New(cfg.YandexClientID, cfg.YandexClientSecret, cfg.YandexRedirectURL)
+		service := application.New(repository, provider, rand.Text, time.Now, cfg.AdminYandexID)
+		directory := application.NewDirectory(repository, cfg.AdminYandexID)
+		auth, err := transport.NewAuth(service, directory, sessions, provider.AuthorizationURL, cfg.YandexRedirectURL)
+		if err != nil {
+			return err
+		}
+		routes = append(routes, auth.Register)
+	} else {
+		routes = append(routes, func(mux *http.ServeMux) {
+			mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "Set YANDEX_CLIENT_ID and YANDEX_CLIENT_SECRET in .env to enable sign-in", http.StatusServiceUnavailable)
+			})
+		})
+	}
+	startupCancel()
 	server := &http.Server{
-		Addr: cfg.HTTPAddress, Handler: transport.NewRouter(func(ctx context.Context) error { return client.Ping(ctx, nil) }),
+		Addr: cfg.HTTPAddress, Handler: transport.NewRouter(func(ctx context.Context) error { return client.Ping(ctx, nil) }, routes...),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
 		WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second,
 	}

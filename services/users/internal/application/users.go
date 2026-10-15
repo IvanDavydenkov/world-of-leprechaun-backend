@@ -20,7 +20,7 @@ type Repository interface {
 }
 
 type IdentityProvider interface {
-	ExchangeCode(context.Context, string) (Identity, error)
+	ExchangeCode(context.Context, string, string) (Identity, error)
 }
 
 type Service struct {
@@ -35,11 +35,11 @@ func New(repository Repository, provider IdentityProvider, newID func() string, 
 	return &Service{repository: repository, provider: provider, newID: newID, now: now, roles: NewRolePolicy(adminYandexID)}
 }
 
-func (s *Service) SignIn(ctx context.Context, code string) (domain.User, error) {
+func (s *Service) SignIn(ctx context.Context, code, verifier string) (domain.User, error) {
 	if code == "" {
 		return domain.User{}, errors.New("authorization code is required")
 	}
-	identity, err := s.provider.ExchangeCode(ctx, code)
+	identity, err := s.provider.ExchangeCode(ctx, code, verifier)
 	if err != nil {
 		return domain.User{}, fmt.Errorf("verify yandex identity: %w", err)
 	}

@@ -2,8 +2,10 @@ package mongodb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"go.mongodb.org/mongo-driver/v2/bson"
+	"leprechaun/users/internal/application"
 	"leprechaun/users/internal/domain"
 	"os"
 	"sync"
@@ -77,5 +79,34 @@ func TestRepositoryIntegration(t *testing.T) {
 	user, err := repository.FindOrCreate(ctx, domain.User{ID: "new-id", YandexID: "same-identity", Role: domain.RoleUser})
 	if err != nil || user.ID != id || user.Role != domain.RoleAdmin {
 		t.Fatalf("existing user changed: %+v err=%v", user, err)
+	}
+	sessions, err := OpenSessions(ctx, client.Database(database))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err = sessions.SaveState(ctx, "state-hash", "verifier", now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if verifier, err := sessions.ConsumeState(ctx, "state-hash", now); err != nil || verifier != "verifier" {
+		t.Fatal("state consumption failed", err)
+	}
+	if _, err = sessions.ConsumeState(ctx, "state-hash", now); !errors.Is(err, application.ErrUnauthenticated) {
+		t.Fatal("state replay accepted", err)
+	}
+	if err = sessions.SaveSession(ctx, "session-hash", id, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if actual, err := sessions.SessionUser(ctx, "session-hash", now); err != nil || actual != id {
+		t.Fatal("session missing", err)
+	}
+	if _, err = sessions.SessionUser(ctx, "session-hash", now.Add(2*time.Minute)); !errors.Is(err, application.ErrUnauthenticated) {
+		t.Fatal("expired session accepted before TTL cleanup", err)
+	}
+	if err = sessions.DeleteSession(ctx, "session-hash"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = sessions.SessionUser(ctx, "session-hash", now); !errors.Is(err, application.ErrUnauthenticated) {
+		t.Fatal("deleted session accepted", err)
 	}
 }

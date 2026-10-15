@@ -7,7 +7,7 @@ import (
 )
 
 // Business routes remain closed until authentication is wired.
-func NewRouter(ready func(context.Context) error) http.Handler {
+func NewRouter(ready func(context.Context) error, register ...func(*http.ServeMux)) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -25,5 +25,8 @@ func NewRouter(ready func(context.Context) error) http.Handler {
 		}
 		_, _ = w.Write([]byte("{\"status\":\"ready\"}\n"))
 	})
+	for _, routes := range register {
+		routes(mux)
+	}
 	return mux
 }
