@@ -100,6 +100,9 @@ func (v *Vault) Get(ctx context.Context, owner, config, generation string) ([]by
 		return nil, err
 	}
 	blob, err := v.store.Load(ctx, id)
+	if errors.Is(err, application.ErrNotFound) {
+		return nil, application.ErrNotFound
+	}
 	if err != nil || blob.KeyID != v.keyID || len(blob.Nonce) != v.aead.NonceSize() || len(blob.Ciphertext) > 1024*1024+v.aead.Overhead() {
 		return nil, ErrUnavailable
 	}

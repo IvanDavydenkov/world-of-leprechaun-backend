@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -88,9 +89,14 @@ func (h *provisionerStub) Revoke(_ context.Context, id, remote string) error {
 func setupManager() (*Manager, *memoryStates, *provisionerStub) {
 	states := &memoryStates{accounts: map[string]domain.Account{}}
 	host := &provisionerStub{created: map[string]string{}, revoked: map[string]bool{}}
-	i := 0
-	manager := NewManager(states, accessStub{}, host, &fileVaultStub{files: map[string][]byte{}}, func() string { i++; return fmt.Sprint(i) }, time.Now)
+	var i atomic.Int64
+	manager := NewManager(states, accessStub{}, host, &fileVaultStub{files: map[string][]byte{}}, func() string { return fmt.Sprint(i.Add(1)) }, time.Now)
 	return manager, states, host
+}
+
+func advanceRetries(m *Manager) {
+	now := m.now().Add(time.Minute)
+	m.now = func() time.Time { return now }
 }
 
 func TestManagementAuthorizationAndIdempotency(t *testing.T) {
@@ -159,8 +165,10 @@ func TestRevokeAllIncludesPendingCreationAndBlocksNewIssuance(t *testing.T) {
 		t.Fatalf("%+v %v", op, err)
 	}
 	host.failRevoke = false
+	advanceRetries(m)
 	// Recreate application service to simulate restart; intent lives in the store.
 	restarted := NewManager(states, accessStub{}, host, &fileVaultStub{files: map[string][]byte{}}, func() string { return "after" }, time.Now)
+	advanceRetries(restarted)
 	if _, err = restarted.ProcessNext(ctx, "user"); err != nil {
 		t.Fatal(err)
 	}
@@ -200,6 +208,7 @@ func TestSingleRevokeHidesBeforeRemoteConfirmation(t *testing.T) {
 		t.Fatal("unconfirmed revocation completed")
 	}
 	host.failRevoke = false
+	advanceRetries(m)
 	if _, err = m.ProcessNext(ctx, "user"); err != nil {
 		t.Fatal(err)
 	}

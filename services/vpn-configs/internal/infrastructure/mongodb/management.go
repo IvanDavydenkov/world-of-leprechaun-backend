@@ -90,11 +90,17 @@ func (r *ManagedRepository) FindByOwner(ctx context.Context, ownerID, configID s
 
 // PendingOwners supports recovery after restarts; workers must not expose this API publicly.
 func (r *ManagedRepository) PendingOwners(ctx context.Context, limit int64) ([]string, error) {
+	return r.PendingOwnersAfter(ctx,"",limit)
+}
+
+func (r *ManagedRepository) PendingOwnersAfter(ctx context.Context, after string, limit int64) ([]string, error) {
 	if limit < 1 || limit > 100 {
 		return nil, application.ErrInvalid
 	}
-	cursor, err := r.collection.Find(ctx, bson.D{{Key: "state.operations", Value: bson.D{{Key: "$elemMatch", Value: bson.D{{Key: "completedat", Value: nil}}}}}},
-		options.Find().SetLimit(limit).SetProjection(bson.D{{Key: "_id", Value: 1}}))
+	filter:=bson.D{{Key: "state.operations", Value: bson.D{{Key: "$elemMatch", Value: bson.D{{Key: "completedat", Value: nil}}}}}}
+	if after!=""{filter=append(filter,bson.E{Key:"_id",Value:bson.D{{Key:"$gt",Value:after}}})}
+	cursor, err := r.collection.Find(ctx, filter,
+		options.Find().SetLimit(limit).SetSort(bson.D{{Key:"_id",Value:1}}).SetProjection(bson.D{{Key: "_id", Value: 1}}))
 	if err != nil {
 		return nil, err
 	}

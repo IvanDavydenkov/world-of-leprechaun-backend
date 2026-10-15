@@ -1,10 +1,10 @@
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $localRoot = Join-Path $projectRoot '.local'
-foreach ($name in @('users-process.json', 'mongo-process.json')) {
+foreach ($name in @('vpn-process.json', 'users-process.json', 'mongo-process.json')) {
     $recordPath = Join-Path $localRoot $name
     if (-not (Test-Path -LiteralPath $recordPath)) { continue }
-    $record = Get-Content -LiteralPath $recordPath -Raw | ConvertFrom-Json
+    $record = Get-Content -LiteralPath $recordPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $process = Get-Process -Id $record.pid -ErrorAction SilentlyContinue
     if ($null -eq $process) { continue }
     if ($process.Path -ne $record.path -or $process.StartTime.ToUniversalTime().Ticks.ToString() -ne $record.started) {

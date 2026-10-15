@@ -15,6 +15,7 @@ import (
 
 	"leprechaun/users/internal/infrastructure/config"
 	"leprechaun/users/internal/infrastructure/mongodb"
+	"leprechaun/users/internal/infrastructure/vpnclient"
 	"leprechaun/users/internal/infrastructure/yandex"
 	transport "leprechaun/users/internal/transport/http"
 )
@@ -62,7 +63,21 @@ func run() error {
 		if err != nil {
 			return err
 		}
+		if err := auth.SetFrontendOrigin(cfg.FrontendOrigin); err != nil {
+			return err
+		}
 		routes = append(routes, auth.Register)
+		var gateway application.ConfigGateway
+		if cfg.InternalToken != "" {
+			gateway, err = vpnclient.New(cfg.PeerAPIURL, cfg.InternalToken)
+			if err != nil {
+				return err
+			}
+		}
+		routes = append(routes, func(mux *http.ServeMux) {
+			auth.RegisterInternal(mux, cfg.InternalToken)
+			auth.RegisterConfigRoutes(mux, gateway)
+		})
 	} else {
 		routes = append(routes, func(mux *http.ServeMux) {
 			mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {

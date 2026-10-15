@@ -1,4 +1,4 @@
-param([switch]$PrepareOnly)
+param([switch]$PrepareOnly, [switch]$WithVPN)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $localRoot = Join-Path $projectRoot '.local'
@@ -18,11 +18,15 @@ function New-RandomValue([bool]$Base64) {
 }
 
 $content = [IO.File]::ReadAllText($envPath)
-foreach ($key in @('MONGO_ROOT_PASSWORD', 'USERS_MONGO_PASSWORD', 'VPN_CONFIGS_MONGO_PASSWORD', 'VPN_CONFIG_ENCRYPTION_KEY')) {
+foreach ($key in @('MONGO_ROOT_PASSWORD', 'USERS_MONGO_PASSWORD', 'VPN_CONFIGS_MONGO_PASSWORD', 'VPN_CONFIG_ENCRYPTION_KEY', 'INTERNAL_SERVICE_TOKEN')) {
     $pattern = '(?m)^' + $key + '=[ \t]*\r?$'
     if ([regex]::IsMatch($content, $pattern)) {
         $value = New-RandomValue ($key -eq 'VPN_CONFIG_ENCRYPTION_KEY')
         $content = [regex]::Replace($content, $pattern, ($key + '=' + $value))
+    }
+    elseif (-not [regex]::IsMatch($content, ('(?m)^' + $key + '='))) {
+        $value = New-RandomValue ($key -eq 'VPN_CONFIG_ENCRYPTION_KEY')
+        $content += "`n" + $key + '=' + $value + "`n"
     }
 }
 [IO.File]::WriteAllText($envPath, $content, (New-Object Text.UTF8Encoding $false))
@@ -37,7 +41,7 @@ function Test-Port([int]$Port) {
 
 function Read-OwnedProcess([string]$RecordPath) {
     if (-not (Test-Path -LiteralPath $RecordPath)) { return $null }
-    $record = Get-Content -LiteralPath $RecordPath -Raw | ConvertFrom-Json
+    $record = Get-Content -LiteralPath $RecordPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $process = Get-Process -Id $record.pid -ErrorAction SilentlyContinue
     if ($null -eq $process) { return $null }
     if ($process.Path -ne $record.path -or $process.StartTime.ToUniversalTime().Ticks.ToString() -ne $record.started) {
@@ -47,6 +51,8 @@ function Read-OwnedProcess([string]$RecordPath) {
 }
 
 function Save-OwnedProcess($Process, [string]$RecordPath) {
+	$Process = Get-Process -Id $Process.Id -ErrorAction Stop
+	if (-not $Process.Path) { throw "Cannot verify executable path for process $($Process.Id)." }
     @{ pid = $Process.Id; path = $Process.Path; started = $Process.StartTime.ToUniversalTime().Ticks.ToString() } |
         ConvertTo-Json | Set-Content -LiteralPath $RecordPath -Encoding UTF8
 }
@@ -92,7 +98,7 @@ try {
 # Read only application keys. Do not execute .env as PowerShell code.
 $settings = @{}
 foreach ($line in ($content -split "`r?`n")) {
-    if ($line -match '^(YANDEX_CLIENT_ID|YANDEX_CLIENT_SECRET|YANDEX_REDIRECT_URL|ADMIN_YANDEX_ID)=(.*)$') {
+    if ($line -match '^(YANDEX_CLIENT_ID|YANDEX_CLIENT_SECRET|YANDEX_REDIRECT_URL|ADMIN_YANDEX_ID|FRONTEND_ORIGIN|INTERNAL_SERVICE_TOKEN|VPN_API_URL)=(.*)$') {
         $settings[$Matches[1]] = $Matches[2].Trim().Trim('"').Trim("'")
     }
 }
@@ -117,4 +123,42 @@ Write-Host 'Backend: http://localhost:8080/'
 Write-Host 'Local-only MongoDB: 127.0.0.1:27018, database users_local (no authentication).'
 if (-not $settings['YANDEX_CLIENT_ID'] -or -not $settings['YANDEX_CLIENT_SECRET']) {
     Write-Host 'OAuth disabled: fill YANDEX_CLIENT_ID and YANDEX_CLIENT_SECRET in .env, then rerun this script.'
+}
+
+if ($WithVPN) {
+    $vpnRecord = Join-Path $localRoot 'vpn-process.json'
+    $existingVPN = Read-OwnedProcess $vpnRecord
+    if ($existingVPN) { Stop-Process -Id $existingVPN.Id; $existingVPN.WaitForExit() }
+    if (Test-Port 8081) { throw 'Port 8081 is occupied by another process.' }
+    $vpnExecutable = Join-Path $localRoot 'vpn-api.exe'
+    Push-Location $projectRoot
+    try {
+        & $goExecutable build -o $vpnExecutable ./services/vpn-configs/cmd/api
+        if ($LASTEXITCODE -ne 0) { throw 'VPN service build failed.' }
+    } finally { Pop-Location }
+    $vpnSettings = @{}
+    foreach ($line in ($content -split "`r?`n")) {
+        if ($line -match '^(VPN_HOST_ADDRESS|VPN_HOST_USERNAME|VPN_HOST_PASSWORD|VPN_CONFIG_ENCRYPTION_KEY|VPN_KNOWN_HOSTS_FILE|VPN_PUBLIC_ENDPOINT|INTERNAL_SERVICE_TOKEN)=(.*)$') {
+            $vpnSettings[$Matches[1]] = $Matches[2].Trim().Trim('"').Trim("'")
+        }
+    }
+    $vpnSettings['VPN_CONFIGS_HTTP_ADDR'] = '127.0.0.1:8081'
+    $vpnSettings['MONGO_URI'] = 'mongodb://127.0.0.1:27018'
+    $vpnSettings['MONGO_DATABASE'] = 'vpn_configs_local'
+    $vpnSettings['USERS_API_URL'] = 'http://127.0.0.1:8080'
+    $previousVPN = @{}
+    try {
+        foreach ($key in $vpnSettings.Keys) {
+            $previousVPN[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')
+            [Environment]::SetEnvironmentVariable($key, $vpnSettings[$key], 'Process')
+        }
+        $vpnProcess = Start-Process -FilePath $vpnExecutable -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru `
+            -RedirectStandardOutput (Join-Path $localRoot 'vpn.stdout.log') -RedirectStandardError (Join-Path $localRoot 'vpn.stderr.log')
+        Save-OwnedProcess $vpnProcess $vpnRecord
+    } finally {
+        foreach ($key in $previousVPN.Keys) { [Environment]::SetEnvironmentVariable($key, $previousVPN[$key], 'Process') }
+    }
+    for ($attempt = 0; $attempt -lt 30 -and -not (Test-Port 8081); $attempt++) { Start-Sleep -Milliseconds 100 }
+    if (-not (Test-Port 8081)) { throw 'VPN service did not start; inspect .local/vpn.stderr.log.' }
+    Write-Host 'VPN API: http://127.0.0.1:8081/ (internal; public admin routes are on users :8080).'
 }

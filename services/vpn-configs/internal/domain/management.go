@@ -42,17 +42,20 @@ func (c ManagedConfig) State() string {
 }
 
 type Operation struct {
-	ID          string
-	ActorID     string
-	OwnerID     string
-	Kind        OperationKind
-	ConfigID    string
-	Generation  string
-	Name        string
-	Targets     []string
-	CreatedAt   time.Time
-	CompletedAt *time.Time
-	Attempts    int
+	AttemptID       string
+	ProcessingUntil *time.Time
+	RetryAfter      *time.Time
+	ID              string
+	ActorID         string
+	OwnerID         string
+	Kind            OperationKind
+	ConfigID        string
+	Generation      string
+	Name            string
+	Targets         []string
+	CreatedAt       time.Time
+	CompletedAt     *time.Time
+	Attempts        int
 	// Public error codes only; never store raw host errors or configuration contents.
 	ErrorCode string
 }
@@ -60,6 +63,7 @@ type Operation struct {
 // Account is a single-document aggregate: queueing revoke-all and preventing new
 // creation is atomic without a MongoDB replica set or distributed transaction.
 type Account struct {
+	Batches    []Batch
 	OwnerID    string
 	Revision   int64
 	Configs    []ManagedConfig
@@ -77,6 +81,18 @@ func (a Account) Active() []Config {
 }
 
 func (a Account) Draining() bool {
+	for _, batch := range a.Batches {
+		if batch.Scope != "all" {
+			continue
+		}
+		for _, id := range batch.OperationIDs {
+			for _, operation := range a.Operations {
+				if operation.ID == id && operation.CompletedAt == nil {
+					return true
+				}
+			}
+		}
+	}
 	for _, operation := range a.Operations {
 		if operation.Kind == RevokeAllConfigs && operation.CompletedAt == nil {
 			return true

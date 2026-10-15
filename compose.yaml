@@ -20,12 +20,15 @@ services:
     build: ./services/users
     environment:
       USERS_HTTP_ADDR: :8080
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}
+      VPN_API_URL: http://vpn-configs:8081
       MONGO_URI: mongodb://users_service:${USERS_MONGO_PASSWORD:?Set USERS_MONGO_PASSWORD}@mongodb:27017/users?authSource=users
       MONGO_DATABASE: users
       YANDEX_CLIENT_ID: ${YANDEX_CLIENT_ID:-}
       ADMIN_YANDEX_ID: ${ADMIN_YANDEX_ID:-}
       YANDEX_CLIENT_SECRET: ${YANDEX_CLIENT_SECRET:-}
       YANDEX_REDIRECT_URL: ${YANDEX_REDIRECT_URL:-}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-}
     ports:
       - "127.0.0.1:8080:8080"
     restart: unless-stopped
@@ -36,6 +39,8 @@ services:
     build: ./services/vpn-configs
     environment:
       VPN_CONFIGS_HTTP_ADDR: :8081
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}
+      USERS_API_URL: http://users:8080
       MONGO_URI: mongodb://vpn_configs_service:${VPN_CONFIGS_MONGO_PASSWORD:?Set VPN_CONFIGS_MONGO_PASSWORD}@mongodb:27017/vpn_configs?authSource=vpn_configs
       MONGO_DATABASE: vpn_configs
       VPN_HOST_ADDRESS: ${VPN_HOST_ADDRESS:-}

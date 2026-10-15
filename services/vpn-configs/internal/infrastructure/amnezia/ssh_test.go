@@ -2,11 +2,44 @@ package amnezia
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/ssh"
 )
+
+func TestSSHPrefersVerifiedED25519HostKey(t *testing.T) {
+	public, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := ssh.NewPublicKey(public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(path, append([]byte("vpn.example "), ssh.MarshalAuthorizedKey(key)...), 0600); err != nil {
+		t.Fatal(err)
+	}
+	client, err := New(Settings{Address: "vpn.example:22", Username: "root", Password: "secret", PublicEndpoint: "vpn.example:39977", KnownHostsFile: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := client.remote.(*sshRemote)
+	if len(remote.config.HostKeyAlgorithms) != 1 || remote.config.HostKeyAlgorithms[0] != ssh.KeyAlgoED25519 {
+		t.Fatal("SSH must negotiate the verified ED25519 key")
+	}
+	if err := remote.config.HostKeyCallback("vpn.example:22", &net.TCPAddr{}, key); err != nil {
+		t.Fatal(err)
+	}
+}
 
 type remoteStub struct {
 	request  request

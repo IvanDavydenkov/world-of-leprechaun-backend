@@ -7,6 +7,8 @@ import (
 )
 
 type Config struct {
+	InternalToken                           string
+	PeerAPIURL                              string
 	KnownHostsFile, PublicEndpoint          string
 	EncryptionKey                           string
 	MongoURI, MongoDatabase                 string
@@ -23,6 +25,8 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("invalid VPN_CONFIGS_HTTP_ADDR: %w", err)
 	}
 	return Config{
+		InternalToken:  os.Getenv("INTERNAL_SERVICE_TOKEN"),
+		PeerAPIURL:     envOrDefault("USERS_API_URL", "http://127.0.0.1:8080"),
 		KnownHostsFile: os.Getenv("VPN_KNOWN_HOSTS_FILE"),
 		PublicEndpoint: os.Getenv("VPN_PUBLIC_ENDPOINT"),
 		EncryptionKey:  os.Getenv("VPN_CONFIG_ENCRYPTION_KEY"),

@@ -86,6 +86,7 @@ func TestSoftDeleteAndReactivationReplaceFileInSameRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	host.failRevoke = false
+	advanceRetries(m)
 	if _, err = m.ProcessNext(ctx, "user"); err != nil {
 		t.Fatal(err)
 	}
@@ -155,6 +156,7 @@ func TestFilePersistenceFailureDoesNotPublishOrDuplicateRemoteConfig(t *testing.
 		t.Fatal("unpersisted file was published")
 	}
 	files.fail = false
+	advanceRetries(m)
 	if _, err = m.ProcessNext(ctx, "user"); err != nil {
 		t.Fatal(err)
 	}

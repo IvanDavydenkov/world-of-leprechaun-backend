@@ -35,6 +35,7 @@ type Auth struct {
 	origin                     string
 	sessionCookie, stateCookie string
 	now                        func() time.Time
+	configGateway              application.ConfigGateway
 }
 
 func NewAuth(signIn SignInUseCase, directory UserDirectory, sessions application.SessionStore, authorize func(string, string) string, redirectURL string) (*Auth, error) {
@@ -223,14 +224,40 @@ func (a *Auth) users(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type entry struct {
-		ID          string      `json:"id"`
-		DisplayName string      `json:"display_name"`
-		Role        domain.Role `json:"role"`
+		ID          string                    `json:"id"`
+		DisplayName string                    `json:"display_name"`
+		Role        domain.Role               `json:"role"`
+		YandexID    string                    `json:"yandex_id"`
+		CreatedAt   time.Time                 `json:"created_at"`
+		VPN         application.ConfigSummary `json:"vpn"`
 	}
+	summaries := a.configSummaries(r.Context(), actor.ID, users)
 	result := make([]entry, 0, len(users))
 	for _, user := range users {
-		result = append(result, entry{user.ID, user.DisplayName, user.Role})
+		summary, ok := summaries[user.ID]
+		if !ok {
+			summary = application.ConfigSummary{Availability: "unavailable"}
+		}
+		result = append(result, entry{user.ID, user.DisplayName, user.Role, user.YandexID, user.CreatedAt, summary})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(result)
+}
+
+// SetFrontendOrigin configures the single trusted browser origin for logout.
+// Empty preserves the OAuth callback origin for backwards compatibility.
+func (a *Auth) SetFrontendOrigin(origin string) error {
+	if origin == "" {
+		return nil
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.User != nil || parsed.Host == "" || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || origin != parsed.Scheme+"://"+parsed.Host {
+		return errors.New("FRONTEND_ORIGIN must be an origin without path, credentials, query or fragment")
+	}
+	local := parsed.Hostname() == "localhost" || parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "::1"
+	if parsed.Scheme != "https" && !(parsed.Scheme == "http" && local) {
+		return errors.New("FRONTEND_ORIGIN requires HTTPS except on localhost")
+	}
+	a.origin = origin
+	return nil
 }

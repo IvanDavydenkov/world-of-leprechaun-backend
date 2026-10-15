@@ -63,6 +63,9 @@ func New(settings Settings) (*Client, error) {
 	}
 	remote := &sshRemote{address: settings.Address, config: &ssh.ClientConfig{
 		User: settings.Username, Auth: []ssh.AuthMethod{ssh.Password(settings.Password)}, HostKeyCallback: callback,
+		// The deployed host is pinned by its independently verified ED25519 key.
+		// Selecting another host key would fail known_hosts verification.
+		HostKeyAlgorithms: []string{ssh.KeyAlgoED25519},
 	}}
 	if settings.Username == "root" {
 		remote.command = "/usr/local/libexec/leprechaun-awg"

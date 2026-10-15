@@ -11,8 +11,9 @@ import (
 )
 
 var (
-	ErrConflict = errors.New("operation conflict")
-	ErrInvalid  = errors.New("invalid operation")
+	ErrUnavailable = errors.New("VPN dependencies unavailable")
+	ErrConflict    = errors.New("operation conflict")
+	ErrInvalid     = errors.New("invalid operation")
 )
 
 // Access resolves the actor's CURRENT privileges in users, using a verified session.
@@ -57,6 +58,10 @@ type Manager struct {
 	newID  func() string
 	now    func() time.Time
 	files  FileVault
+}
+
+func (m *Manager) AuthorizeAdmin(ctx context.Context, actor string) error {
+	return m.access.RequireAdmin(ctx, actor)
 }
 
 func NewManager(store StateStore, access Access, host Provisioner, files FileVault, newID func() string, now func() time.Time) *Manager {
@@ -243,7 +248,7 @@ func (m *Manager) ProcessNext(ctx context.Context, ownerID string) (bool, error)
 	var operation domain.Operation
 	found := false
 	for _, op := range account.Operations {
-		if op.CompletedAt == nil {
+		if op.CompletedAt == nil && (op.RetryAfter == nil || !op.RetryAfter.After(m.now())) && (op.ProcessingUntil == nil || !op.ProcessingUntil.After(m.now())) {
 			operation = op
 			found = true
 			break
@@ -251,6 +256,44 @@ func (m *Manager) ProcessNext(ctx context.Context, ownerID string) (bool, error)
 	}
 	if !found {
 		return false, nil
+	}
+	// Claim a bounded lease by CAS. A restarted worker recovers expired claims;
+	// an attempt identity prevents stale completions overwriting a newer attempt.
+	claim := m.newID()
+	claimed := false
+	for retry := 0; retry < 32; retry++ {
+		state, err := m.store.Load(ctx, ownerID)
+		if err != nil {
+			return false, err
+		}
+		revision := state.Revision
+		for i := range state.Operations {
+			op := &state.Operations[i]
+			if op.ID != operation.ID || op.ActorID != operation.ActorID {
+				continue
+			}
+			if op.CompletedAt != nil || op.ProcessingUntil != nil && op.ProcessingUntil.After(m.now()) || op.RetryAfter != nil && op.RetryAfter.After(m.now()) {
+				return false, nil
+			}
+			until := m.now().Add(2 * time.Minute)
+			op.ProcessingUntil = &until
+			op.AttemptID = claim
+			op.Attempts++
+			op.ErrorCode = ""
+			operation = *op
+		}
+		saved, err := m.store.Save(ctx, state, revision)
+		if err != nil {
+			return false, err
+		}
+		if saved {
+			account = state
+			claimed = true
+			break
+		}
+	}
+	if !claimed {
+		return false, ErrConflict
 	}
 	remoteID := ""
 	var hostErr error
@@ -321,14 +364,20 @@ func (m *Manager) ProcessNext(ctx context.Context, ownerID string) (bool, error)
 		if current.Operations[index].CompletedAt != nil {
 			return true, nil
 		}
+		if current.Operations[index].AttemptID != claim {
+			return true, ErrConflict
+		}
 		revision := current.Revision
-		current.Operations[index].Attempts++
+		current.Operations[index].ProcessingUntil = nil
 		if hostErr != nil {
 			current.Operations[index].ErrorCode = "host_operation_unconfirmed"
+			retry := m.now().Add(30 * time.Second)
+			current.Operations[index].RetryAfter = &retry
 		} else {
 			completed := m.now().UTC()
 			current.Operations[index].CompletedAt = &completed
 			current.Operations[index].ErrorCode = ""
+			current.Operations[index].RetryAfter = nil
 			for i := range current.Configs {
 				config := &current.Configs[i]
 				if (operation.Kind == domain.CreateConfig || operation.Kind == domain.ReactivateConfig) && config.ID == operation.ConfigID && config.Generation == operation.Generation {

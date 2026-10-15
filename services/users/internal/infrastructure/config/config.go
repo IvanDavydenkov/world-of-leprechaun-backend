@@ -7,6 +7,9 @@ import (
 )
 
 type Config struct {
+	InternalToken                                         string
+	PeerAPIURL                                            string
+	FrontendOrigin                                        string
 	AdminYandexID                                         string
 	MongoURI, MongoDatabase                               string
 	HTTPAddress                                           string
@@ -22,6 +25,9 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("invalid USERS_HTTP_ADDR: %w", err)
 	}
 	return Config{
+		InternalToken:  os.Getenv("INTERNAL_SERVICE_TOKEN"),
+		PeerAPIURL:     envOrDefault("VPN_API_URL", "http://127.0.0.1:8081"),
+		FrontendOrigin: os.Getenv("FRONTEND_ORIGIN"),
 		AdminYandexID:  os.Getenv("ADMIN_YANDEX_ID"),
 		MongoURI:       envOrDefault("MONGO_URI", "mongodb://localhost:27017"),
 		MongoDatabase:  envOrDefault("MONGO_DATABASE", "users"),

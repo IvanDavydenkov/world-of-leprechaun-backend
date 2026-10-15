@@ -41,6 +41,7 @@ func TestPartialBulkRevocationMarksOnlyConfirmedRecordsDeleted(t *testing.T) {
 		t.Fatal("bulk operation finished prematurely")
 	}
 	host.failGeneration = ""
+	advanceRetries(m)
 	if _, err = m.ProcessNext(ctx, "user"); err != nil {
 		t.Fatal(err)
 	}

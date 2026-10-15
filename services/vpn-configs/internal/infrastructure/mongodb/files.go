@@ -2,6 +2,8 @@ package mongodb
 
 import (
 	"context"
+	"errors"
+	"leprechaun/vpn-configs/internal/application"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -32,5 +34,8 @@ func (s *FileStore) Load(ctx context.Context, id string) (vault.Blob, error) {
 		Blob vault.Blob `bson:"blob"`
 	}
 	err := s.collection.FindOne(ctx, bson.D{{Key: "_id", Value: id}}).Decode(&stored)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return vault.Blob{}, application.ErrNotFound
+	}
 	return stored.Blob, err
 }
