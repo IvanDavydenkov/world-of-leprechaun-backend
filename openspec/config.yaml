@@ -1,0 +1,50 @@
+schema: spec-driven
+context: |
+  Пиши артефакты по-русски, сохраняя нормативные SHALL и заголовки OpenSpec.
+  Продукт: публичная регистрация через Яндекс и конфиги Amnezia VPN.
+  Два микросервиса на Go с чистой архитектурой: users и vpn-configs.
+  MongoDB: отдельные базы и учётные записи сервисов.
+  Две роли user и admin; у пользователя произвольное количество конфигов.
+  Права admin и жизненный цикл конфигов согласованы в changes/admin-config-management.
+  Хост: Ubuntu, SSH, AmneziaWG через приложение Amnezia; версия и контейнер пока неизвестны.
+  Удаление мягкое после отзыва; активация создаёт новые ключи и файл в той же записи.
+  Файл в MongoDB шифруется ключом из окружения vpn-configs.
+  Не открывай бизнес-API без авторизации; не выдумывай API Amnezia.
+rules:
+  proposal:
+    - Указывай границы изменения и нерешённые вопросы.
+  design:
+    - Описывай владение данными, авторизацию и обработку секретов.
+  tasks:
+    - Разделяй реализованное и планируемое, указывай проверки.
+
+# Project context (optional)
+# Add only constraints that should guide OpenSpec artifacts and workflows.
+# Include constraints an agent cannot infer by reading the code.
+# Keep general project documentation and discoverable codebase facts out.
+# Example:
+#   context: |
+#     Designs and tasks must cover Windows, macOS, and Linux
+#     Write all artifacts in Spanish
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always state what is out of scope
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing
