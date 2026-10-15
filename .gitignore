@@ -5,3 +5,7 @@ bin/
 coverage.out
 *.exe
 .idea/
+__pycache__/
+*.pyc
+secrets/
+compose.override.yaml

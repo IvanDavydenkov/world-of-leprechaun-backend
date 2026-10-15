@@ -7,6 +7,7 @@ import (
 )
 
 type Config struct {
+	KnownHostsFile, PublicEndpoint          string
 	EncryptionKey                           string
 	MongoURI, MongoDatabase                 string
 	HTTPAddress                             string
@@ -22,11 +23,13 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("invalid VPN_CONFIGS_HTTP_ADDR: %w", err)
 	}
 	return Config{
-		EncryptionKey: os.Getenv("VPN_CONFIG_ENCRYPTION_KEY"),
-		MongoURI:      envOrDefault("MONGO_URI", "mongodb://localhost:27017"),
-		MongoDatabase: envOrDefault("MONGO_DATABASE", "vpn_configs"),
-		HTTPAddress:   address,
-		HostAddress:   os.Getenv("VPN_HOST_ADDRESS"), HostUsername: os.Getenv("VPN_HOST_USERNAME"), HostPassword: os.Getenv("VPN_HOST_PASSWORD"),
+		KnownHostsFile: os.Getenv("VPN_KNOWN_HOSTS_FILE"),
+		PublicEndpoint: os.Getenv("VPN_PUBLIC_ENDPOINT"),
+		EncryptionKey:  os.Getenv("VPN_CONFIG_ENCRYPTION_KEY"),
+		MongoURI:       envOrDefault("MONGO_URI", "mongodb://localhost:27017"),
+		MongoDatabase:  envOrDefault("MONGO_DATABASE", "vpn_configs"),
+		HTTPAddress:    address,
+		HostAddress:    os.Getenv("VPN_HOST_ADDRESS"), HostUsername: os.Getenv("VPN_HOST_USERNAME"), HostPassword: os.Getenv("VPN_HOST_PASSWORD"),
 	}, nil
 }
 
