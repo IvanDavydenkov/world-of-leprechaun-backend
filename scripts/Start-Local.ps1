@@ -51,8 +51,13 @@ function Read-OwnedProcess([string]$RecordPath) {
 }
 
 function Save-OwnedProcess($Process, [string]$RecordPath) {
-	$Process = Get-Process -Id $Process.Id -ErrorAction Stop
-	if (-not $Process.Path) { throw "Cannot verify executable path for process $($Process.Id)." }
+    $launchedProcessId = $Process.Id
+    for ($identityAttempt = 0; $identityAttempt -lt 50; $identityAttempt++) {
+        $Process = Get-Process -Id $launchedProcessId -ErrorAction Stop
+        if ($Process.Path) { break }
+        Start-Sleep -Milliseconds 100
+    }
+    if (-not $Process.Path) { throw "Cannot verify executable path for process $launchedProcessId." }
     @{ pid = $Process.Id; path = $Process.Path; started = $Process.StartTime.ToUniversalTime().Ticks.ToString() } |
         ConvertTo-Json | Set-Content -LiteralPath $RecordPath -Encoding UTF8
 }

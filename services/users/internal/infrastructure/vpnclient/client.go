@@ -28,7 +28,7 @@ func New(base, token string) (*Client, error) {
 	return &Client{base: base, token: token, http: &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 func (c *Client) Forward(ctx context.Context, actor, method, path, key string, body []byte) (application.ConfigResponse, error) {
-	if !strings.HasPrefix(path, "/admin/users/") && path != "/me/configs" && !strings.HasPrefix(path, "/me/configs/") {
+	if !strings.HasPrefix(path, "/admin/users/") && path != "/admin/vpn-servers" && !strings.HasPrefix(path, "/admin/vpn-servers/") && path != "/me/configs" && !strings.HasPrefix(path, "/me/configs/") {
 		return application.ConfigResponse{}, errors.New("invalid VPN route")
 	}
 	request, err := http.NewRequestWithContext(ctx, method, c.base+path, bytes.NewReader(body))
@@ -49,7 +49,7 @@ func (c *Client) Forward(ctx context.Context, actor, method, path, key string, b
 		return application.ConfigResponse{}, errors.New("invalid VPN response")
 	}
 	location := response.Header.Get("Location")
-	if location != "" && !strings.HasPrefix(location, "/admin/users/") {
+	if location != "" && !strings.HasPrefix(location, "/admin/users/") && !strings.HasPrefix(location, "/admin/vpn-servers/") {
 		location = ""
 	}
 	return application.ConfigResponse{Status: response.StatusCode, Body: content, Location: location, ContentType: response.Header.Get("Content-Type"), Disposition: response.Header.Get("Content-Disposition")}, nil

@@ -68,6 +68,8 @@ func run() error {
 		manager := application.NewManager(repository, access, host, files, rand.Text, time.Now)
 		api := transport.NewBatchAPI(manager, cfg.InternalToken)
 		routes = append(routes, api.Register)
+		servers := application.NewServerRegistry(mongodb.NewServerRepository(client.Database(cfg.MongoDatabase)), files, access, rand.Text, time.Now)
+		routes = append(routes, transport.NewServerAPI(servers, cfg.InternalToken).Register)
 		if host != nil {
 			workerCtx, cancel := context.WithCancel(ctx)
 			done := make(chan struct{})

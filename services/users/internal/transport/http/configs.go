@@ -16,6 +16,10 @@ func (a *Auth) RegisterConfigRoutes(mux *http.ServeMux, gateway application.Conf
 	a.configGateway = gateway
 	a.registerOwnConfigs(mux)
 	for _, pattern := range []string{
+		"POST /admin/vpn-servers",
+		"GET /admin/vpn-servers",
+		"GET /admin/vpn-servers/{server_id}",
+		"PATCH /admin/vpn-servers/{server_id}",
 		"POST /admin/users/{user_id}/configs",
 		"DELETE /admin/users/{user_id}/configs/{config_id}",
 		"POST /admin/users/{user_id}/configs/bulk-delete",
@@ -40,7 +44,7 @@ func (a *Auth) RegisterConfigRoutes(mux *http.ServeMux, gateway application.Conf
 				problem(w, 503, "vpn_unavailable")
 				return
 			}
-			if r.Method == http.MethodPost {
+			if r.Method == http.MethodPost || r.Method == http.MethodPatch {
 				media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 				if err != nil || media != "application/json" {
 					problem(w, 400, "invalid_content_type")
