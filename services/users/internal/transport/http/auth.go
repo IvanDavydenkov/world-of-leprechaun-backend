@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"leprechaun/users/internal/application"
@@ -27,15 +28,16 @@ type UserDirectory interface {
 }
 
 type Auth struct {
-	signIn                     SignInUseCase
-	directory                  UserDirectory
-	sessions                   application.SessionStore
-	authorizationURL           func(string, string) string
-	secure                     bool
-	origin                     string
-	sessionCookie, stateCookie string
-	now                        func() time.Time
-	configGateway              application.ConfigGateway
+	signIn                        SignInUseCase
+	directory                     UserDirectory
+	sessions                      application.SessionStore
+	authorizationURL              func(string, string) string
+	secure                        bool
+	origin                        string
+	sessionCookie, stateCookie    string
+	now                           func() time.Time
+	configGateway                 application.ConfigGateway
+	loginRedirect, logoutRedirect string
 }
 
 func NewAuth(signIn SignInUseCase, directory UserDirectory, sessions application.SessionStore, authorize func(string, string) string, redirectURL string) (*Auth, error) {
@@ -48,6 +50,7 @@ func NewAuth(signIn SignInUseCase, directory UserDirectory, sessions application
 		return nil, errors.New("OAuth requires HTTPS except on localhost")
 	}
 	auth := &Auth{signIn: signIn, directory: directory, sessions: sessions, authorizationURL: authorize, secure: redirect.Scheme == "https", origin: redirect.Scheme + "://" + redirect.Host, now: time.Now, sessionCookie: "leprechaun_session", stateCookie: "leprechaun_oauth_state"}
+	auth.loginRedirect, auth.logoutRedirect = "/me", "/"
 	if auth.secure {
 		auth.sessionCookie = "__Host-leprechaun_session"
 		auth.stateCookie = "__Host-leprechaun_oauth_state"
@@ -147,7 +150,7 @@ func (a *Auth) callback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	a.cookie(w, a.sessionCookie, token, 24*60*60)
-	http.Redirect(w, r, "/me", http.StatusSeeOther)
+	http.Redirect(w, r, a.loginRedirect, http.StatusSeeOther)
 }
 func (a *Auth) current(r *http.Request) (domain.User, error) {
 	cookie, err := r.Cookie(a.sessionCookie)
@@ -194,7 +197,11 @@ func (a *Auth) logout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	a.cookie(w, a.sessionCookie, "", -1)
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	http.Redirect(w, r, a.logoutRedirect, http.StatusSeeOther)
 }
 func (a *Auth) users(w http.ResponseWriter, r *http.Request) {
 	actor, err := a.current(r)
@@ -259,5 +266,32 @@ func (a *Auth) SetFrontendOrigin(origin string) error {
 		return errors.New("FRONTEND_ORIGIN requires HTTPS except on localhost")
 	}
 	a.origin = origin
+	return nil
+}
+
+// SetFrontendRedirects accepts only relative paths or URLs on the trusted frontend.
+func (a *Auth) SetFrontendRedirects(login, logout string) error {
+	for _, target := range []string{login, logout} {
+		if target == "" {
+			continue
+		}
+		u, err := url.Parse(target)
+		if err != nil || u.User != nil || u.Fragment != "" || strings.ContainsAny(target, "\\\r\n") {
+			return errors.New("invalid frontend redirect")
+		}
+		if u.IsAbs() {
+			if u.Scheme+"://"+u.Host != a.origin {
+				return errors.New("frontend redirect must match FRONTEND_ORIGIN")
+			}
+		} else if !strings.HasPrefix(target, "/") || strings.HasPrefix(target, "//") || u.Host != "" {
+			return errors.New("invalid relative frontend redirect")
+		}
+	}
+	if login != "" {
+		a.loginRedirect = login
+	}
+	if logout != "" {
+		a.logoutRedirect = logout
+	}
 	return nil
 }

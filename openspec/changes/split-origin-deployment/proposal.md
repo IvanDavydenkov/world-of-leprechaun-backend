@@ -1,0 +1,1 @@
+Одобрено пользователем: фронт https://worldofleprechauns.ru и API https://api.worldofleprechauns.ru на одном сервере за Nginx, разработка localhost. Подготовить env-шаблоны, CORS для cookie, безопасные OAuth-redirects, JSON logout и Nginx-конфигурацию. Это подготовка файлов, без изменения DNS/сертификатов и без деплоя на реальный сервер.

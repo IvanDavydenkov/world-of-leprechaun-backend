@@ -103,7 +103,7 @@ try {
 # Read only application keys. Do not execute .env as PowerShell code.
 $settings = @{}
 foreach ($line in ($content -split "`r?`n")) {
-    if ($line -match '^(YANDEX_CLIENT_ID|YANDEX_CLIENT_SECRET|YANDEX_REDIRECT_URL|ADMIN_YANDEX_ID|FRONTEND_ORIGIN|INTERNAL_SERVICE_TOKEN|VPN_API_URL)=(.*)$') {
+    if ($line -match '^(YANDEX_CLIENT_ID|YANDEX_CLIENT_SECRET|YANDEX_REDIRECT_URL|ADMIN_YANDEX_ID|FRONTEND_ORIGIN|AUTH_SUCCESS_REDIRECT_URL|AUTH_LOGOUT_REDIRECT_URL|INTERNAL_SERVICE_TOKEN|VPN_API_URL)=(.*)$') {
         $settings[$Matches[1]] = $Matches[2].Trim().Trim('"').Trim("'")
     }
 }

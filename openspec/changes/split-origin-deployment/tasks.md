@@ -1,0 +1,4 @@
+- [x] Production env, Compose mount, Nginx template and deployment guide.
+- [x] Exact-origin credentialed CORS, preflight and trusted redirect validation.
+- [x] JSON logout 204, frontend build-time API origin and localhost fallback.
+- [x] Backend tests/vet, frontend typecheck/72 tests/production build, local restart and preflight 204. Docker/Nginx runtime validation remains for the deployment host (tools unavailable locally).

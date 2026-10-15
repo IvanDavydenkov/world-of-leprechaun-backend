@@ -10,6 +10,7 @@ type Config struct {
 	InternalToken                                         string
 	PeerAPIURL                                            string
 	FrontendOrigin                                        string
+	LoginRedirect, LogoutRedirect                         string
 	AdminYandexID                                         string
 	MongoURI, MongoDatabase                               string
 	HTTPAddress                                           string
@@ -28,6 +29,8 @@ func Load() (Config, error) {
 		InternalToken:  os.Getenv("INTERNAL_SERVICE_TOKEN"),
 		PeerAPIURL:     envOrDefault("VPN_API_URL", "http://127.0.0.1:8081"),
 		FrontendOrigin: os.Getenv("FRONTEND_ORIGIN"),
+		LoginRedirect:  os.Getenv("AUTH_SUCCESS_REDIRECT_URL"),
+		LogoutRedirect: os.Getenv("AUTH_LOGOUT_REDIRECT_URL"),
 		AdminYandexID:  os.Getenv("ADMIN_YANDEX_ID"),
 		MongoURI:       envOrDefault("MONGO_URI", "mongodb://localhost:27017"),
 		MongoDatabase:  envOrDefault("MONGO_DATABASE", "users"),

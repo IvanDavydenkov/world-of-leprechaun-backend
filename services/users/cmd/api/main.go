@@ -66,6 +66,9 @@ func run() error {
 		if err := auth.SetFrontendOrigin(cfg.FrontendOrigin); err != nil {
 			return err
 		}
+		if err := auth.SetFrontendRedirects(cfg.LoginRedirect, cfg.LogoutRedirect); err != nil {
+			return err
+		}
 		routes = append(routes, auth.Register)
 		var gateway application.ConfigGateway
 		if cfg.InternalToken != "" {
@@ -87,7 +90,7 @@ func run() error {
 	}
 	startupCancel()
 	server := &http.Server{
-		Addr: cfg.HTTPAddress, Handler: transport.NewRouter(func(ctx context.Context) error { return client.Ping(ctx, nil) }, routes...),
+		Addr: cfg.HTTPAddress, Handler: transport.WithFrontendCORS(cfg.FrontendOrigin, transport.NewRouter(func(ctx context.Context) error { return client.Ping(ctx, nil) }, routes...)),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
 		WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second,
 	}

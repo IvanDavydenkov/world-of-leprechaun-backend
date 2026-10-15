@@ -1,0 +1,4 @@
+services:
+  vpn-configs:
+    volumes:
+      - ./secrets/vpn_known_hosts:/run/secrets/vpn_known_hosts:ro
