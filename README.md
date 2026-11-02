@@ -97,3 +97,5 @@ npm exec --yes --package=@fission-ai/openspec -- openspec validate --all --stric
 ```
 
 Интеграционные Go-тесты пропускаются без `MONGO_TEST_URI`. Чтобы запустить их, задайте URI отдельной тестовой MongoDB с правом создания/удаления баз и повторите `go test` с `-count=1`. Тесты создают и удаляют только свои базы с префиксом `leprechaun_test_`; проверяют конкурентную регистрацию, изоляцию конфигов, CAS и сохранение зашифрованного файла. Учётные записи сервисов из Compose этих административных прав не имеют.
+
+VPN server switching backend, automatic helper preparation and one-time legacy import: [docs/vpn-server-switching.md](docs/vpn-server-switching.md). Production upgrade requires backup and the explicit import before enabling switching.

@@ -13,6 +13,8 @@ import subprocess
 import sys
 import tempfile
 
+HELPER_VERSION = "2.0.0"
+INTERFACE = "awg0"
 CONTAINER = "amnezia-awg2"
 DIRECTORY = "/opt/amnezia/awg"
 CONFIG = DIRECTORY + "/awg0.conf"
@@ -95,16 +97,12 @@ class Backend:
             "sh", temporary, path, data=value)
 
     def sync(self):
-        # Preserve strip's exit status: process substitution can otherwise hide
-        # a strip failure and accidentally sync an empty configuration.
         run("docker", "exec", CONTAINER, "bash", "-c",
-            "set -e; umask 077; tmp=/opt/amnezia/awg/.leprechaun-sync.conf; "
-            "trap 'rm -f \"$tmp\"' EXIT; "
-            "awg-quick strip /opt/amnezia/awg/awg0.conf > \"$tmp\"; "
-            "test -s \"$tmp\"; awg syncconf awg0 \"$tmp\"")
-
+            'set -e; umask 077; tmp=$(mktemp /opt/amnezia/awg/.leprechaun-XXXXXX.conf); '
+            'trap \'rm -f "$tmp"\' EXIT; awg-quick strip "$1" > "$tmp"; '
+            'test -s "$tmp"; awg syncconf "$2" "$tmp"', "sh", CONFIG, INTERFACE)
     def peers(self):
-        return set(run("docker", "exec", CONTAINER, "awg", "show", "awg0", "peers").split())
+        return set(run("docker", "exec", CONTAINER, "awg", "show", INTERFACE, "peers").split())
 
     def keypair(self):
         private = run("docker", "exec", CONTAINER, "awg", "genkey").strip()
@@ -191,6 +189,7 @@ class Backend:
                   "PersistentKeepalive = 25", ""]
         return {"state": "planned", "owner": request["owner"], "name": request["name"],
                 "public": public, "psk": psk, "address": address,
+                "container": CONTAINER, "interface": INTERFACE,
                 "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "file": "\n".join(lines), "endpoint": endpoint}
 
@@ -200,6 +199,18 @@ class Backend:
             raise ValueError("invalid generation")
         path = self.journal/(generation+".json")
         state = json.loads(path.read_text()) if path.exists() else None
+        if state is not None and (state.get("container", "amnezia-awg2") != CONTAINER or state.get("interface", "awg0") != INTERFACE):
+            raise ValueError("generation host context mismatch")
+        if request.get("action") == "inspect":
+            if state is None:
+                return {"error": "helper_journal_missing"}
+            return {"remote_id": state["public"], "state": state["state"]}
+        if request.get("action") == "verify":
+            if state is None:
+                return {"error": "helper_journal_missing"}
+            if state.get("state") != "active" or state.get("public") != request.get("remote_id") or state["public"] not in self.peers():
+                return {"error": "binding_missing_on_host"}
+            return {"verified": True}
         if request.get("action") == "create":
             if not all(isinstance(request.get(key), str) and 0 < len(request[key]) <= 256
                        for key in ("owner", "name", "endpoint")):
@@ -233,6 +244,18 @@ class Backend:
         raise ValueError("unknown action")
 
 
+def configure(request):
+    global CONTAINER, INTERFACE, CONFIG
+    container = request.get("container", "amnezia-awg2")
+    interface = request.get("interface", "awg0")
+    if not isinstance(container, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", container):
+        raise ValueError("invalid container")
+    if not isinstance(interface, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,14}", interface):
+        raise ValueError("invalid interface")
+    CONTAINER, INTERFACE = container, interface
+    CONFIG = DIRECTORY + "/" + interface + ".conf"
+
+
 def main():
     import fcntl  # Ubuntu only; core functions can be unit tested on other platforms.
     if os.geteuid() != 0:
@@ -248,9 +271,18 @@ def main():
         request = json.loads(raw)
         if not isinstance(request, dict):
             raise ValueError("invalid request")
+        configure(request)
         if "v3.1.20260812" not in run("docker", "exec", CONTAINER, "awg", "--version"):
             raise ValueError("unsupported tools version")
-        print(json.dumps(Backend().handle(request)))
+        if request.get("action") == "health":
+            values = settings(sections(Backend().read(CONFIG))[0])
+            if not all(values.get(k) for k in ("Address", "ListenPort", "Jc", "S1", "S2", "H1", "H2", "H3", "H4")):
+                raise ValueError("unsupported config")
+            if not isinstance(json.loads(Backend().read(TABLE)), list):
+                raise ValueError("unsupported table")
+            print(json.dumps({"version": HELPER_VERSION, "healthy": True}))
+        else:
+            print(json.dumps(Backend().handle(request)))
 
 
 if __name__ == "__main__":

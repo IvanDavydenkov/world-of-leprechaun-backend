@@ -56,6 +56,15 @@ func ValidKey(value string) bool {
 }
 
 func (m *Manager) SubmitBatch(ctx context.Context, actor, owner, key string, request BatchRequest) (BatchResult, error) {
+	if m.fleet != nil && ctx.Value(managerFleetContext{}) == nil {
+		var result BatchResult
+		err := m.fleetContext(ctx, func(c context.Context) error {
+			var e error
+			result, e = m.SubmitBatch(c, actor, owner, key, request)
+			return e
+		})
+		return result, err
+	}
 	if err := m.access.RequireAdmin(ctx, actor); err != nil {
 		return BatchResult{}, err
 	}
@@ -151,7 +160,7 @@ func (m *Manager) SubmitBatch(ctx context.Context, actor, owner, key string, req
 		if exists {
 			continue
 		}
-		if m.host == nil || m.files == nil {
+		if (m.host == nil && m.fleet == nil) || m.files == nil {
 			return BatchResult{}, ErrUnavailable
 		}
 		if account.Draining() {
@@ -183,9 +192,16 @@ func (m *Manager) SubmitBatch(ctx context.Context, actor, owner, key string, req
 		batch.OperationIDs = nil
 		if request.Scope == "create" {
 			for _, config := range creations {
+				if m.fleet != nil {
+					serverID, e := m.fleet.DefaultServer(ctx)
+					if e != nil {
+						return BatchResult{}, e
+					}
+					config.ServerID = serverID
+				}
 				opID := batch.ID + "_" + config.ID
 				account.Configs = append(account.Configs, config)
-				account.Operations = append(account.Operations, domain.Operation{ID: opID, ActorID: actor, OwnerID: owner, Kind: domain.CreateConfig, ConfigID: config.ID, Generation: config.Generation, Name: config.Name, CreatedAt: batch.CreatedAt})
+				account.Operations = append(account.Operations, domain.Operation{ID: opID, ServerID: config.ServerID, ActorID: actor, OwnerID: owner, Kind: domain.CreateConfig, ConfigID: config.ID, Generation: config.Generation, Name: config.Name, CreatedAt: batch.CreatedAt})
 				batch.OperationIDs = append(batch.OperationIDs, opID)
 			}
 		} else {

@@ -19,11 +19,12 @@ import (
 var ErrUnconfirmed = errors.New("Amnezia SSH operation unconfirmed")
 
 type Settings struct {
-	Address        string // Explicit SSH host:port.
-	Username       string
-	Password       string
-	KnownHostsFile string
-	PublicEndpoint string // VPN host:UDP port, not SSH port.
+	Address                                    string // Explicit SSH host:port.
+	Username                                   string
+	Password                                   string
+	KnownHostsFile                             string
+	PublicEndpoint                             string // VPN host:UDP port, not SSH port.
+	HostKey, Fingerprint, Container, Interface string
 }
 
 type Remote interface {
@@ -31,8 +32,9 @@ type Remote interface {
 }
 
 type Client struct {
-	remote   Remote
-	endpoint string
+	remote           Remote
+	endpoint         string
+	container, iface string
 }
 
 var _ application.Provisioner = (*Client)(nil)
@@ -54,10 +56,15 @@ func New(settings Settings) (*Client, error) {
 	if err != nil || portNumber < 1 || portNumber > 65535 {
 		return nil, errors.New("VPN_PUBLIC_ENDPOINT must have a valid UDP port")
 	}
-	if settings.Username == "" || settings.Password == "" || settings.KnownHostsFile == "" {
+	if settings.Username == "" || settings.Password == "" || (settings.KnownHostsFile == "" && settings.HostKey == "" && settings.Fingerprint == "") {
 		return nil, errors.New("SSH username, password and known_hosts file are required")
 	}
-	callback, err := knownhosts.New(settings.KnownHostsFile)
+	var callback ssh.HostKeyCallback
+	if settings.HostKey != "" || settings.Fingerprint != "" {
+		callback = serverKeyCallback(settings.HostKey, settings.Fingerprint, nil)
+	} else {
+		callback, err = knownhosts.New(settings.KnownHostsFile)
+	}
 	if err != nil {
 		return nil, errors.New("cannot read VPN SSH known_hosts")
 	}
@@ -72,10 +79,15 @@ func New(settings Settings) (*Client, error) {
 	} else {
 		remote.command = "sudo -n /usr/local/libexec/leprechaun-awg"
 	}
-	return NewRemote(remote, settings.PublicEndpoint), nil
+	client := NewRemote(remote, settings.PublicEndpoint)
+	client.container = settings.Container
+	client.iface = settings.Interface
+	return client, nil
 }
 
 type request struct {
+	Container  string `json:"container,omitempty"`
+	Interface  string `json:"interface,omitempty"`
 	Action     string `json:"action"`
 	Generation string `json:"generation"`
 	Owner      string `json:"owner,omitempty"`
@@ -88,7 +100,7 @@ func (c *Client) Create(ctx context.Context, generation, owner, name string) (ap
 	if generation == "" || owner == "" || name == "" {
 		return application.Provisioned{}, application.ErrInvalid
 	}
-	data, _ := json.Marshal(request{Action: "create", Generation: generation, Owner: owner, Name: name, Endpoint: c.endpoint})
+	data, _ := json.Marshal(request{Container: c.container, Interface: c.iface, Action: "create", Generation: generation, Owner: owner, Name: name, Endpoint: c.endpoint})
 	output, err := c.remote.Run(ctx, data)
 	if err != nil {
 		return application.Provisioned{}, ErrUnconfirmed
@@ -107,7 +119,7 @@ func (c *Client) Revoke(ctx context.Context, generation, remoteID string) error 
 	if generation == "" || remoteID == "" {
 		return application.ErrInvalid
 	}
-	data, _ := json.Marshal(request{Action: "revoke", Generation: generation, RemoteID: remoteID})
+	data, _ := json.Marshal(request{Container: c.container, Interface: c.iface, Action: "revoke", Generation: generation, RemoteID: remoteID})
 	output, err := c.remote.Run(ctx, data)
 	if err != nil {
 		return ErrUnconfirmed
@@ -119,6 +131,28 @@ func (c *Client) Revoke(ctx context.Context, generation, remoteID string) error 
 		return ErrUnconfirmed
 	}
 	return nil
+}
+
+func (c *Client) Resolve(ctx context.Context, generation string) (string, error) {
+	data, _ := json.Marshal(request{Action: "inspect", Generation: generation, Container: c.container, Interface: c.iface})
+	output, err := c.remote.Run(ctx, data)
+	if err != nil {
+		return "", err
+	}
+	var result struct {
+		RemoteID string `json:"remote_id"`
+		Error    string `json:"error"`
+	}
+	if json.Unmarshal(output, &result) != nil {
+		return "", ErrUnconfirmed
+	}
+	if result.Error == "helper_journal_missing" {
+		return "", application.Fault(result.Error, application.ErrUnavailable)
+	}
+	if result.RemoteID == "" {
+		return "", ErrUnconfirmed
+	}
+	return result.RemoteID, nil
 }
 
 type sshRemote struct {

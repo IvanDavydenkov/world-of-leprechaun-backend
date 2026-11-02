@@ -16,6 +16,9 @@ func NewServerRepository(db *mongo.Database) *ServerRepository {
 	return &ServerRepository{db.Collection("vpn_servers")}
 }
 func (r *ServerRepository) Create(ctx context.Context, s domain.VPNServer) error {
+	if err := assertLease(ctx); err != nil {
+		return err
+	}
 	_, err := r.collection.InsertOne(ctx, s)
 	if mongo.IsDuplicateKeyError(err) {
 		return application.ErrConflict
@@ -43,6 +46,9 @@ func (r *ServerRepository) List(ctx context.Context) ([]domain.VPNServer, error)
 	return result, nil
 }
 func (r *ServerRepository) Update(ctx context.Context, s domain.VPNServer, revision int64) (bool, error) {
+	if err := assertLease(ctx); err != nil {
+		return false, err
+	}
 	result, err := r.collection.ReplaceOne(ctx, bson.M{"_id": s.ID, "revision": revision}, s)
 	if err != nil {
 		return false, err

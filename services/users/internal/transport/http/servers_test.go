@@ -15,7 +15,7 @@ func TestServerRoutesRequireAdminSessionAndOrigin(t *testing.T) {
 	g := &gatewayStub{}
 	router := NewRouter(func(context.Context) error { return nil }, a.Register, func(mux *http.ServeMux) { a.RegisterConfigRoutes(mux, g) })
 	store.SaveSession(context.Background(), HashCredential("session"), "user", time.Now().Add(time.Hour))
-	for _, tc := range []struct{ method, path string }{{"POST", "/admin/vpn-servers"}, {"GET", "/admin/vpn-servers"}, {"GET", "/admin/vpn-servers/id"}, {"PATCH", "/admin/vpn-servers/id"}} {
+	for _, tc := range []struct{ method, path string }{{"POST", "/admin/vpn-servers"}, {"POST", "/admin/vpn-switches"}, {"POST", "/admin/vpn-revocations"}, {"GET", "/admin/vpn-routing"}, {"GET", "/admin/vpn-server-operations?limit=1"}, {"POST", "/admin/vpn-servers/id/prepare"}, {"POST", "/admin/vpn-server-operations/op/retry"}, {"GET", "/admin/vpn-servers"}, {"GET", "/admin/vpn-servers/id"}, {"PATCH", "/admin/vpn-servers/id"}} {
 		call := func(session bool, role domain.Role, origin string) *httptest.ResponseRecorder {
 			directory.role = role
 			r := httptest.NewRequest(tc.method, tc.path, strings.NewReader("{}"))

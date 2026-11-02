@@ -1,44 +1,85 @@
 ## ADDED Requirements
 
-### Requirement: Encrypted server registry
-The system SHALL store VPN server connection settings in the VPN service database and SHALL encrypt SSH passwords with an externally held key. API responses SHALL NOT expose passwords or ciphertext.
+### Requirement: Подготовка сервера из админки
+Система SHALL позволять администратору подготовить Ubuntu-хост с уже установленной AmneziaWG через сайт, обнаружить настройки и атомарно установить либо обновить доверенный helper без изменения существующих peer.
 
-#### Scenario: Read server metadata
-- **WHEN** an administrator lists configured servers
-- **THEN** connection metadata and password presence are returned without secrets
+#### Scenario: Подтверждение ключа до пароля
+- **WHEN** SSH-ключ не совпадает с доверенным ключом или отпечатком записи
+- **THEN** пароль не передаётся и подготовка завершается ошибкой host_key_mismatch
 
-### Requirement: Stable generation routing
-The system SHALL bind each issuance and operation to its server ID and SHALL preserve this binding when the default server changes.
+#### Scenario: Неоднозначное обнаружение
+- **WHEN** найдены несколько подходящих установок либо UDP mapping
+- **THEN** операция переходит в needs_input и требует явного выбора обнаруженного кандидата
 
-#### Scenario: Revoke an old issuance
-- **WHEN** the default server changes before an old generation is revoked
-- **THEN** revocation still targets that generation's original server
+#### Scenario: Подготовка завершена
+- **WHEN** версия/helper и настройки проверены для текущей revision
+- **THEN** сервер становится ready без создания, отзыва или перезапуска VPN peer
 
-### Requirement: Reissue migration
-The system SHALL reissue active configurations on a verified target with new keys while retaining permanent config IDs and owners. The downloadable file SHALL switch only after successful provisioning and encrypted persistence.
+### Requirement: Независимые выдачи на нескольких серверах
+Система SHALL сохранять server binding и историю поколений отдельно от постоянного config_id и выбранного скачиваемого файла.
 
-#### Scenario: Target unavailable
-- **WHEN** target provisioning fails
-- **THEN** the current file remains selected and retry reuses the reserved target generation
+#### Scenario: Возврат на прежний сервер
+- **WHEN** администратор переключает A→B→A и выдача A подтверждённо действует
+- **THEN** повторно используется прежний A generation и файл без смены ключей
 
-#### Scenario: Source unavailable
-- **WHEN** the source cannot be reached
-- **THEN** target issuance may succeed while old-generation revocation remains unconfirmed
+#### Scenario: Прежняя выдача отозвана
+- **WHEN** выбран сервер с подтверждённо отозванным binding
+- **THEN** создаётся новое поколение без восстановления отозванных ключей
 
-#### Scenario: Deletion races with migration
-- **WHEN** revocation is requested before migration commits its generation switch
-- **THEN** migration cannot restore downloadable active access and any provisioned target peer is queued for revocation
+### Requirement: Переключение одним действием
+Система SHALL одной долговечной административной операцией назначать подготовленный target default для новых выдач и переключать все глобально active конфиги, сохраняя ID и владельцев.
 
-### Requirement: Explicit old-generation cleanup
-The system SHALL track issuance progress separately from old-generation cleanup and SHALL require an explicit administrative cleanup request to revoke superseded generations.
+#### Scenario: Старый хост недоступен
+- **WHEN** source недоступен, но target готов и доступен
+- **THEN** переключение не требует связи с source и не объявляет его выдачи отозванными
 
-#### Scenario: New file issued
-- **WHEN** a target generation becomes the selected generation
-- **THEN** the source generation is not reported as revoked without host confirmation
+#### Scenario: Сбой нового хоста
+- **WHEN** создание либо проверка выдачи target не подтверждены
+- **THEN** выбранный файл элемента остаётся прежним и в операции показывается ошибка
 
-### Requirement: Idempotent transition from environment
-The system SHALL provide an explicit resumable import of existing environment settings and stored config references without creating or revoking VPN peers.
+#### Scenario: Частичное выполнение
+- **WHEN** часть элементов переключена, а часть завершилась ошибкой
+- **THEN** успешные элементы и новый default сохраняются, результат partial явно виден администратору
 
-#### Scenario: Repeated import
-- **WHEN** the import is retried after interruption
-- **THEN** it resumes without duplicate server records or changes to client files
+### Requirement: Отсутствие неявного отзыва
+Система SHALL NOT отзывать старые peer, удалять их файлы или останавливать сервер в ходе подготовки, переключения, возврата или обычного обслуживания истории.
+
+#### Scenario: Переключение на другой сервер
+- **WHEN** выбранный файл сменился с A на B
+- **THEN** существующий A peer остаётся действующим до отдельного явного запроса отзыва
+
+### Requirement: Явный отзыв с областью действия
+Система SHALL поддерживать отдельный admin-only отзыв bindings одного сервера либо глобальный отзыв конфигов на всех серверах.
+
+#### Scenario: Сервер ещё используется
+- **WHEN** server-scoped отзыв затрагивает выбранную выдачу или текущий default
+- **THEN** запрос отклоняется 409 до изменений и не вызывает автоматическое переключение
+
+#### Scenario: Глобальное удаление в гонке
+- **WHEN** глобальное удаление зарегистрировано до завершения switch элемента
+- **THEN** скачивание блокируется и switch не может восстановить active доступ, все созданные поколения включаются в явный отзыв
+
+### Requirement: Долговечность и безопасные повторы
+Система SHALL сохранять планы, ключи идемпотентности и фиксированные поколения до удалённых действий и SHALL обеспечивать восстановление после перезапуска без дублирования peer.
+
+#### Scenario: Потерян ответ 202
+- **WHEN** клиент повторяет тот же payload с прежним ключом
+- **THEN** возвращается прежняя operation_id без создания нового намерения
+
+#### Scenario: Устаревший повтор переключения
+- **WHEN** после исходной операции началось более новое переключение
+- **THEN** retry исходной операции отклоняется switch_superseded без перезаписи выбранного сервера
+
+### Requirement: Безопасный переход с env
+Система SHALL идемпотентно привязать существующие конфиги и операции к исходному server_id до включения переключения из БД без изменения действующих peer или файлов.
+
+#### Scenario: Повтор импорта
+- **WHEN** применение миграции метаданных возобновлено после сбоя
+- **THEN** серверы и выдачи не дублируются, прежние config_id/owner_id/ключи сохраняются
+
+### Requirement: Граница клиентского переключения
+Система SHALL явно сообщать, что смена скачиваемого файла не перенастраивает устройства пользователей автоматически.
+
+#### Scenario: Файл заменён
+- **WHEN** администратор видит успешное переключение элемента
+- **THEN** UI не утверждает, что пользователь уже импортировал файл или подключился к target

@@ -16,6 +16,15 @@ func (a *Auth) RegisterConfigRoutes(mux *http.ServeMux, gateway application.Conf
 	a.configGateway = gateway
 	a.registerOwnConfigs(mux)
 	for _, pattern := range []string{
+		"GET /admin/vpn-routing",
+		"POST /admin/vpn-servers/{server_id}/prepare",
+		"POST /admin/vpn-switches",
+		"POST /admin/vpn-revocations",
+		"GET /admin/vpn-server-operations",
+		"GET /admin/vpn-server-operations/{operation_id}",
+		"GET /admin/vpn-server-operations/{operation_id}/items",
+		"POST /admin/vpn-server-operations/{operation_id}/resume",
+		"POST /admin/vpn-server-operations/{operation_id}/retry",
 		"POST /admin/vpn-servers",
 		"GET /admin/vpn-servers",
 		"GET /admin/vpn-servers/{server_id}",
@@ -56,7 +65,11 @@ func (a *Auth) RegisterConfigRoutes(mux *http.ServeMux, gateway application.Conf
 				problem(w, 400, "invalid_body")
 				return
 			}
-			response, err := gateway.Forward(r.Context(), actor.ID, r.Method, r.URL.EscapedPath(), r.Header.Get("Idempotency-Key"), body)
+			path := r.URL.EscapedPath()
+			if r.URL.RawQuery != "" {
+				path += "?" + r.URL.RawQuery
+			}
+			response, err := gateway.Forward(r.Context(), actor.ID, r.Method, path, r.Header.Get("Idempotency-Key"), body)
 			if err != nil {
 				problem(w, 503, "vpn_unavailable")
 				return

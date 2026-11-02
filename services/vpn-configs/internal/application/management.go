@@ -58,6 +58,7 @@ type Manager struct {
 	newID  func() string
 	now    func() time.Time
 	files  FileVault
+	fleet  *Fleet
 }
 
 func (m *Manager) AuthorizeAdmin(ctx context.Context, actor string) error {
@@ -68,9 +69,25 @@ func NewManager(store StateStore, access Access, host Provisioner, files FileVau
 	return &Manager{store: store, access: access, host: host, files: files, newID: newID, now: now}
 }
 
+type managerFleetContext struct{}
+
+func (m *Manager) UseFleet(f *Fleet) { m.fleet = f }
+func (m *Manager) fleetContext(ctx context.Context, fn func(context.Context) error) error {
+	return m.fleet.ConfigMutation(ctx, func(locked context.Context) error { return fn(context.WithValue(locked, managerFleetContext{}, true)) })
+}
+
 // Submit records durable intent before any host calls. requestID is an
 // administrator-scoped idempotency key; retries must repeat identical parameters.
 func (m *Manager) Submit(ctx context.Context, actorID, ownerID, requestID string, kind domain.OperationKind, configID, name string) (domain.Operation, error) {
+	if m.fleet != nil && ctx.Value(managerFleetContext{}) == nil {
+		var result domain.Operation
+		err := m.fleetContext(ctx, func(c context.Context) error {
+			var e error
+			result, e = m.Submit(c, actorID, ownerID, requestID, kind, configID, name)
+			return e
+		})
+		return result, err
+	}
 	if err := m.access.RequireAdmin(ctx, actorID); err != nil {
 		return domain.Operation{}, err
 	}
@@ -118,6 +135,13 @@ func (m *Manager) Submit(ctx context.Context, actorID, ownerID, requestID string
 				return previous, nil
 			}
 		}
+		if m.fleet != nil && (kind == domain.CreateConfig || kind == domain.ReactivateConfig) {
+			serverID, e := m.fleet.DefaultServer(ctx)
+			if e != nil {
+				return domain.Operation{}, e
+			}
+			operation.ServerID = serverID
+		}
 		revision := account.Revision
 		switch kind {
 		case domain.CreateConfig:
@@ -125,7 +149,7 @@ func (m *Manager) Submit(ctx context.Context, actorID, ownerID, requestID string
 				return domain.Operation{}, ErrConflict
 			}
 			operation.ConfigID = newConfigID
-			account.Configs = append(account.Configs, domain.ManagedConfig{ID: newConfigID, Name: name, CreatedAt: operation.CreatedAt, Desired: true, Generation: operation.Generation, Version: 1})
+			account.Configs = append(account.Configs, domain.ManagedConfig{ID: newConfigID, Name: name, CreatedAt: operation.CreatedAt, Desired: true, Generation: operation.Generation, Version: 1, ServerID: operation.ServerID})
 		case domain.ReactivateConfig:
 			if account.Draining() {
 				return domain.Operation{}, ErrConflict
@@ -156,6 +180,7 @@ func (m *Manager) Submit(ctx context.Context, actorID, ownerID, requestID string
 				config.Desired, config.Provisioned = true, false
 				config.DeletedAt, config.RemoteID = nil, ""
 				config.Generation = operation.Generation
+				config.ServerID = operation.ServerID
 				config.Version++
 			}
 			if !found {
@@ -238,7 +263,12 @@ func (m *Manager) History(ctx context.Context, actorID, ownerID string) ([]domai
 // endpoint. Queued creations precede revocations, so draining catches late creates.
 // Concurrent retries rely on the durable idempotency guarantee of Provisioner.
 func (m *Manager) ProcessNext(ctx context.Context, ownerID string) (bool, error) {
-	if m.host == nil || m.files == nil {
+	if m.fleet != nil && ctx.Value(managerFleetContext{}) == nil {
+		var worked bool
+		err := m.fleetContext(ctx, func(c context.Context) error { var e error; worked, e = m.ProcessNext(c, ownerID); return e })
+		return worked, err
+	}
+	if (m.host == nil && m.fleet == nil) || m.files == nil {
 		return false, errors.New("VPN provisioner or file vault is not configured")
 	}
 	account, err := m.store.Load(ctx, ownerID)
@@ -295,6 +325,16 @@ func (m *Manager) ProcessNext(ctx context.Context, ownerID string) (bool, error)
 	if !claimed {
 		return false, ErrConflict
 	}
+	host := m.host
+	if m.fleet != nil && (operation.Kind == domain.CreateConfig || operation.Kind == domain.ReactivateConfig) {
+		if operation.ServerID == "" {
+			return true, Fault("schema_migration_required", ErrUnavailable)
+		}
+		host, err = m.fleet.Provider(ctx, operation.ServerID)
+		if err != nil {
+			return true, err
+		}
+	}
 	remoteID := ""
 	var hostErr error
 	if operation.Kind == domain.CreateConfig || operation.Kind == domain.ReactivateConfig {
@@ -306,7 +346,7 @@ func (m *Manager) ProcessNext(ctx context.Context, ownerID string) (bool, error)
 			}
 		}
 		var result Provisioned
-		result, hostErr = m.host.Create(ctx, operation.Generation, ownerID, name)
+		result, hostErr = host.Create(ctx, operation.Generation, ownerID, name)
 		remoteID = result.RemoteID
 		if hostErr == nil && (remoteID == "" || len(result.File) == 0 || len(result.File) > 1024*1024) {
 			hostErr = errors.New("invalid remote config result")
@@ -318,6 +358,22 @@ func (m *Manager) ProcessNext(ctx context.Context, ownerID string) (bool, error)
 		// Keep the operation pending on partial failure. Already successful revokes
 		// are idempotent and safe to repeat after restart.
 		for _, target := range operation.Targets {
+			if m.fleet != nil {
+				if e := m.fleet.RevokeConfig(ctx, ownerID, target, ""); e != nil {
+					hostErr = e
+					break
+				}
+				var generation string
+				for _, c := range account.Configs {
+					if c.ID == target {
+						generation = c.Generation
+					}
+				}
+				if e := m.confirmRevocation(ctx, ownerID, target, generation); e != nil {
+					return true, e
+				}
+				continue
+			}
 			remote := ""
 			for _, config := range account.Configs {
 				if config.ID == target {
@@ -336,7 +392,7 @@ func (m *Manager) ProcessNext(ctx context.Context, ownerID string) (bool, error)
 					break
 				}
 			}
-			if err := m.host.Revoke(ctx, generation, remote); err != nil {
+			if err := host.Revoke(ctx, generation, remote); err != nil {
 				hostErr = err
 				break
 			}
@@ -382,6 +438,19 @@ func (m *Manager) ProcessNext(ctx context.Context, ownerID string) (bool, error)
 				config := &current.Configs[i]
 				if (operation.Kind == domain.CreateConfig || operation.Kind == domain.ReactivateConfig) && config.ID == operation.ConfigID && config.Generation == operation.Generation {
 					config.RemoteID, config.Provisioned = remoteID, true
+					if m.fleet != nil {
+						found := false
+						for j := range config.Issuances {
+							if config.Issuances[j].Generation == operation.Generation {
+								config.Issuances[j].RemoteID = remoteID
+								config.Issuances[j].State = "active"
+								found = true
+							}
+						}
+						if !found {
+							config.Issuances = append(config.Issuances, domain.Issuance{ServerID: operation.ServerID, Generation: operation.Generation, RemoteID: remoteID, State: "active", CreatedAt: operation.CreatedAt})
+						}
+					}
 					// Never set Desired=true here: a concurrent revoke may already have cleared it.
 				}
 			}

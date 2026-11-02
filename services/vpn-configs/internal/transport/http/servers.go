@@ -124,6 +124,21 @@ func (a *ServerAPI) handle(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(result)
 }
 func serverError(w http.ResponseWriter, err error) {
+	var coded *application.CodeError
+	if errors.As(err, &coded) {
+		status := 503
+		if errors.Is(err, application.ErrConflict) {
+			status = 409
+		} else if errors.Is(err, application.ErrInvalid) {
+			status = 400
+		} else if errors.Is(err, application.ErrForbidden) {
+			status = 403
+		} else if errors.Is(err, application.ErrNotFound) {
+			status = 404
+		}
+		apiError(w, status, coded.Code)
+		return
+	}
 	switch {
 	case errors.Is(err, application.ErrForbidden):
 		apiError(w, 403, "admin_required")

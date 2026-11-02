@@ -58,24 +58,23 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		var host application.Provisioner
-		if cfg.KnownHostsFile != "" {
-			host, err = amnezia.New(amnezia.Settings{Address: cfg.HostAddress, Username: cfg.HostUsername, Password: cfg.HostPassword, KnownHostsFile: cfg.KnownHostsFile, PublicEndpoint: cfg.PublicEndpoint})
-			if err != nil {
-				return err
-			}
+		serverRepo := mongodb.NewServerRepository(client.Database(cfg.MongoDatabase))
+		fleet := &application.Fleet{Store: mongodb.NewFleetStore(client.Database(cfg.MongoDatabase)), Accounts: repository, Servers: serverRepo, Access: access, Host: &amnezia.FleetHost{Secrets: files}, Files: files, Guard: mongodb.NewCoordinator(client.Database(cfg.MongoDatabase)), NewID: rand.Text, Now: time.Now}
+		if err := fleet.Initialize(ctx); err != nil {
+			return err
 		}
-		manager := application.NewManager(repository, access, host, files, rand.Text, time.Now)
-		api := transport.NewBatchAPI(manager, cfg.InternalToken)
-		routes = append(routes, api.Register)
-		servers := application.NewServerRegistry(mongodb.NewServerRepository(client.Database(cfg.MongoDatabase)), files, access, rand.Text, time.Now)
-		routes = append(routes, transport.NewServerAPI(servers, cfg.InternalToken).Register)
-		if host != nil {
-			workerCtx, cancel := context.WithCancel(ctx)
-			done := make(chan struct{})
-			go func() { defer close(done); manager.RunWorker(workerCtx, repository) }()
-			defer func() { cancel(); <-done }()
-		}
+		manager := application.NewManager(repository, access, nil, files, rand.Text, time.Now)
+		manager.UseFleet(fleet)
+		routes = append(routes, transport.NewBatchAPI(manager, cfg.InternalToken).Register)
+		servers := application.NewServerRegistry(serverRepo, files, access, rand.Text, time.Now)
+		servers.UseFleet(fleet)
+		routes = append(routes, transport.NewServerAPI(servers, cfg.InternalToken).Register, transport.NewFleetAPI(fleet, cfg.InternalToken).Register)
+		workerCtx, cancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() { defer close(done); manager.RunWorker(workerCtx, repository) }()
+		fleetDone := make(chan struct{})
+		go func() { defer close(fleetDone); fleet.Run(workerCtx) }()
+		defer func() { cancel(); <-done; <-fleetDone }()
 	}
 	server := &http.Server{
 		Addr: cfg.HTTPAddress, Handler: transport.NewRouter(func(ctx context.Context) error { return client.Ping(ctx, nil) }, routes...),

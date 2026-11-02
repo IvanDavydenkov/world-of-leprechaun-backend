@@ -45,6 +45,9 @@ func (r *ManagedRepository) Load(ctx context.Context, ownerID string) (domain.Ac
 }
 
 func (r *ManagedRepository) Save(ctx context.Context, state domain.Account, revision int64) (bool, error) {
+	if err := assertLease(ctx); err != nil {
+		return false, err
+	}
 	if state.OwnerID == "" || revision < 0 {
 		return false, application.ErrInvalid
 	}
@@ -90,17 +93,19 @@ func (r *ManagedRepository) FindByOwner(ctx context.Context, ownerID, configID s
 
 // PendingOwners supports recovery after restarts; workers must not expose this API publicly.
 func (r *ManagedRepository) PendingOwners(ctx context.Context, limit int64) ([]string, error) {
-	return r.PendingOwnersAfter(ctx,"",limit)
+	return r.PendingOwnersAfter(ctx, "", limit)
 }
 
 func (r *ManagedRepository) PendingOwnersAfter(ctx context.Context, after string, limit int64) ([]string, error) {
 	if limit < 1 || limit > 100 {
 		return nil, application.ErrInvalid
 	}
-	filter:=bson.D{{Key: "state.operations", Value: bson.D{{Key: "$elemMatch", Value: bson.D{{Key: "completedat", Value: nil}}}}}}
-	if after!=""{filter=append(filter,bson.E{Key:"_id",Value:bson.D{{Key:"$gt",Value:after}}})}
+	filter := bson.D{{Key: "state.operations", Value: bson.D{{Key: "$elemMatch", Value: bson.D{{Key: "completedat", Value: nil}}}}}}
+	if after != "" {
+		filter = append(filter, bson.E{Key: "_id", Value: bson.D{{Key: "$gt", Value: after}}})
+	}
 	cursor, err := r.collection.Find(ctx, filter,
-		options.Find().SetLimit(limit).SetSort(bson.D{{Key:"_id",Value:1}}).SetProjection(bson.D{{Key: "_id", Value: 1}}))
+		options.Find().SetLimit(limit).SetSort(bson.D{{Key: "_id", Value: 1}}).SetProjection(bson.D{{Key: "_id", Value: 1}}))
 	if err != nil {
 		return nil, err
 	}

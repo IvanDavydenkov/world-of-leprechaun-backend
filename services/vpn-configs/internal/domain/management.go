@@ -12,6 +12,8 @@ const (
 )
 
 type ManagedConfig struct {
+	ServerID   string
+	Issuances  []Issuance
 	ID         string
 	Name       string
 	RemoteID   string
@@ -42,6 +44,7 @@ func (c ManagedConfig) State() string {
 }
 
 type Operation struct {
+	ServerID        string
 	AttemptID       string
 	ProcessingUntil *time.Time
 	RetryAfter      *time.Time
