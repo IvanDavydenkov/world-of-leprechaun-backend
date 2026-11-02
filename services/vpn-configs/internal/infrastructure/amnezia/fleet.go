@@ -25,7 +25,7 @@ var HelperSource []byte
 //go:embed assets/prepare.py
 var prepareSource string
 
-const HelperVersion = "2.0.0"
+const HelperVersion = "2.0.1"
 
 type PasswordDecryptor interface {
 	DecryptServerPassword(string, []byte) (string, error)

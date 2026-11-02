@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 
-HELPER_VERSION = "2.0.0"
+HELPER_VERSION = "2.0.1"
 INTERFACE = "awg0"
 CONTAINER = "amnezia-awg2"
 DIRECTORY = "/opt/amnezia/awg"
@@ -98,7 +98,7 @@ class Backend:
 
     def sync(self):
         run("docker", "exec", CONTAINER, "bash", "-c",
-            'set -e; umask 077; tmp=$(mktemp /opt/amnezia/awg/.leprechaun-XXXXXX.conf); '
+            'set -e; umask 077; tmp=$(mktemp /opt/amnezia/awg/.leprechaun-sync-XXXXXX); '
             'trap \'rm -f "$tmp"\' EXIT; awg-quick strip "$1" > "$tmp"; '
             'test -s "$tmp"; awg syncconf "$2" "$tmp"', "sh", CONFIG, INTERFACE)
     def peers(self):
